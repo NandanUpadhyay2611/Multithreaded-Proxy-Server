@@ -65,6 +65,48 @@ mutex mtxLock;  //automatically initiallized unlike in c
 cache_element* head;
 int cacheSize;
 
+int connectRemoteServer(char* hostAddr,int portNo){
+    int remoteSocketId=socket(AF_INET,SOCK_STREAM,0);
+    if(remoteSocketId<0){
+    cerr<<"Failed creating a socket\n";
+}
+
+} 
+
+
+int handleRequest(int clientSocketId,ParsedRequest* request,char* tempReq){
+    char *buff=(char *)malloc(sizeof(char)*MAX_BYTES);
+    strcpy(buff,"GET ");
+    strcat(buff,request->path);
+    strcat(buff," ");
+    strcat(buff,request->version);
+    strcat(buff,"\r\n");  //This sequence ("\r\n") is used to terminate the HTTP request line
+    size_t len=strlen(buff);
+
+    if(ParsedHeader_set(request,"Connection","close")<0){
+        cerr<<"Set header key is not working\n";
+    }
+    if(ParsedHeader_get(request,"Host")==NULL){
+        if(ParsedHeader_set(request,"Host",request->host)<0){
+            cerr<<"Set Host header key is not working\n";
+        }
+    }
+
+    if(ParsedRequest_unparse_headers(request,buff+len,(size_t)MAX_BYTES-len)<0){ //attempts to serialize the HTTP headers from the request object into the buffer buff starting from the position buff + len.
+        cout<<"Unparse failed\n";
+    }
+
+    int serverPort=80;
+    if(request->port!=NULL){
+        serverPort=atoi(request->port);
+    }
+
+    int remoteSocketId=connectRemoteServer(request->host,serverPort); //socket of the original server to where request is made to like google.com
+}
+
+
+
+
 void* threadFn(void* socketNew){
     sem_wait(&semaphore);
     int p;
@@ -79,12 +121,14 @@ void* threadFn(void* socketNew){
 
     int bytesSendClient,len;
 
-    char* buffer=(char*)calloc(MAX_BYTES,sizeof(char));
-    bytesSendClient=recv(socket,buffer,MAX_BYTES,0);  // recieving data from socket to buffer //recv is a blocking call that waits for data to be received.
+    char* buffer=(char*)calloc(MAX_BYTES,sizeof(char)); //initiallize buffer to store data recieved from the client
+    bytesSendClient=recv(socket,buffer,MAX_BYTES,0);  // recieving data from socket(client) to buffer //recv is a blocking call that waits for data to be received.
 
+
+//while loop to read data
     while(bytesSendClient>0){
         len=strlen(buffer);
-        if(strstr(buffer,"\r\n\r\n")==NULL){  //untill termination is reached
+        if(strstr(buffer,"\r\n\r\n")==NULL){ //his loop continues receiving data until the end of the HTTP header is found (\r\n\r\n).
             bytesSendClient=recv(socket,buffer+len,MAX_BYTES-len,0);
         }
         else{
@@ -93,13 +137,13 @@ void* threadFn(void* socketNew){
     }
 
     char* tempReq=(char *)malloc(strlen(buffer)*sizeof(char)+1);
-
+//Copies the received data into tempReq for further processing.
     for(int i=0;i<strlen(buffer);i++){
         tempReq[i]=buffer[i];
     }
 
-    cache_element* temp=find(tempReq);
-    if(temp!=NULL){
+    cache_element* temp=find(tempReq); //search for the request in linked list of lru
+    if(temp!=NULL){//if found
         int size=temp->len/sizeof(char);
         int pos=0;
         char response[MAX_BYTES];
@@ -108,7 +152,9 @@ void* threadFn(void* socketNew){
             for(int i=0;i<MAX_BYTES;i++){
                 response[i]=temp->data[i];
                 pos++;
+
             }
+            
             send(socket,response,MAX_BYTES,0);
         }
 
@@ -118,10 +164,43 @@ void* threadFn(void* socketNew){
 
     // if not present in cache
     else if(bytesSendClient>0){
-        len=strlen()
+        len=strlen(buffer);
+        ParsedRequest* request=ParsedRequest_create();  //using library to get header ,method,host,protocol etc
+
+        if(ParsedRequest_parse(request,buffer,len)<0){
+            cerr<<"Parsing failed\n";
+        }
+        else{
+            if(!strcmp(request->method,"GET")){
+                if(request->host && request->path && checkHTTPversion(request->version)==1){
+                    bytesSendClient=handleRequest(socket,request,tempReq);
+                
+                if(bytesSendClient==-1){
+                    sendErrorMessage(socket,500);
+                }
+            }
+            else{
+                sendErrorMessage(socket,500);
+            }
+        }
+        else{
+            cout<<"This code doesnt support any method apart from GET\n";
+        }
     }
-
-
+    ParsedRequest_destroy(request);
+    
+    }
+    else if(bytesSendClient==0){
+        cout<<"Client is disconnected\n";
+    }
+    shutdown(socket,SHUT_RDWR);
+    close(socket);
+    free(buffer);
+    sem_post(&semaphore);
+    sem_getvalue(&semaphore,p)
+    cout<<"Semaphore post value is "<<p<<endl;
+    free(tempReq);
+    return NULL;
 }
 
 int main(int argc,char* argv[]){
@@ -177,6 +256,9 @@ if(setsockopt(proxy_socketId,SOL_SOCKET,SO_REUSEADDR,(const char*)&reuse,sizeof(
         exit(1);
        }
 
+       cout << "Server is listening on port 8080" <<endl;
+
+
     // forr keeping ann account of how many sockets connected to your proxy
         int i=0;
         //each socket connected have their int returning just like fd
@@ -212,36 +294,5 @@ if(setsockopt(proxy_socketId,SOL_SOCKET,SO_REUSEADDR,(const char*)&reuse,sizeof(
 
         close(proxy_socketId);
         return 0;
-
-
-    //create a socket (for server)
-    int serverSocketId=socket(AF_INET,SOCK_STREAM,0);
-
-        if (serverSocketId == -1) {
-        std::cerr << "Error creating socket\n";
-        return 1;
-    }
-    
-
-    // Bind the socket to an ip address and port
-   
-    serverAddr.sin_family= AF_INET; //IPV4
-    serverAddr.sin_port= htons(8080); //port number
-    serverAddr.sin_addr.s_addr=INADDR_ANY; // Bind to any available interface
-
-    if(bind(serverSocketId, (struct sockaddr *) &serverAddr,sizeof(serverAddr))==-1){
-        std::cerr << "Error binding socket\n";
-        close(serverSocketId);
-        return 1;
-    }
-
-    // Listen for incoming connections
-    if(listen(serverSocket, 5)==-1){
-        std::cerr << "Error listening on socket\n";
-        close(serverSocketId);
-        return 1;
-    }
-
-    cout << "Server is listening on port 8080" <<endl;
 
 }
