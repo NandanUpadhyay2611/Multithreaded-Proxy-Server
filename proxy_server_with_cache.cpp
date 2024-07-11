@@ -66,11 +66,32 @@ cache_element* head;
 int cacheSize;
 
 int connectRemoteServer(char* hostAddr,int portNo){
+    
     int remoteSocketId=socket(AF_INET,SOCK_STREAM,0);
     if(remoteSocketId<0){
     cerr<<"Failed creating a socket\n";
+    return -1;
 }
+struct hostent* host=gethostbyname(hostAddr);
+if(host==NULL){
+    cerr<<"No such host exist\n";
+    return -1;
+}
+struct sockaddr_in remoteAddr;
+    
+    remoteAddr.sin_family=AF_INET;
+    remoteAddr.sin_port=htons(portNo);
+    // remoteAddr.sin_addr.s_addr=INADDR_ANY;
 
+    bcopy((char*)&host->h_addr,(char*)&remoteAddr.sin_addr.s_addr,host->h_length);
+
+    if(connect(remoteSocketId,(struct sockaddr *)&remoteAddr,(size_t)sizeof(remoteAddr))<=0){
+        cerr<<"Error in connecting to remote server\n";
+        return -1;
+    }
+
+    return remoteSocketId;
+   
 } 
 
 
@@ -102,6 +123,36 @@ int handleRequest(int clientSocketId,ParsedRequest* request,char* tempReq){
     }
 
     int remoteSocketId=connectRemoteServer(request->host,serverPort); //socket of the original server to where request is made to like google.com
+    
+    if(remoteSocketId<0){
+        return -1;
+    }
+
+    int bytesSent=send(remoteSocketId,buff,strlen(buff),0);
+
+    bytesSent=recv(remoteSocketId,buff,MAX_BYTES-1,0);
+    char* tempBuffer=(char*)malloc(sizeof(char)*MAX_BYTES);
+    int tempBufferSize=MAX_BYTES;
+    int tempBufferIndex=0;
+
+    while(bytesSent>0){
+        bytesSent=send(clientSocketId,buff,bytesSent,0);
+        for(int i=0;i<bytesSent/sizeof(char);i++){
+            tempBuffer[tempBufferIndex]=buff[i];
+            tempBufferIndex++;
+        }
+        tempBufferSize+=MAX_BYTES;
+        tempBuffer=(char*)realloc(tempBuffer,tempBufferSize);
+        if(bytesSent<0){
+            cerr<<"Error in sending data to client\n";
+            break;
+        }
+        bytesSent=recv(remoteSocketId,buff,MAX_BYTES-1,0);
+
+        //revisit whole code you wrote today;
+    }
+
+
 }
 
 
